@@ -7,6 +7,9 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+// Determine Environment
+const isProduction = process.env.NODE_ENV === 'production';
 console.log("Current Environment:", process.env.NODE_ENV);
 
 // Middleware
@@ -14,6 +17,7 @@ const corsOptions = {
     origin: [
         'http://localhost:5173',
         'https://building-management-system-client.vercel.app'
+        // Add other deployed URLs if any
     ],
     credentials: true,
     optionsSuccessStatus: 200,
@@ -23,7 +27,6 @@ app.use(express.json());
 app.use(cookieParser());
 
 // MongoDB Connection
-// ENCODE PASSWORD to be safe against special characters in Vercel
 const uri = `mongodb+srv://${process.env.DB_USER}:${encodeURIComponent(process.env.DB_PASS)}@cluster0.9v9ertm.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -46,6 +49,7 @@ async function run() {
         // Middleware: Verify Token
         const verifyToken = (req, res, next) => {
             const token = req.cookies?.token;
+            console.log('Token verified:', token); // Debug log
             if (!token) {
                 return res.status(401).send({ message: 'unauthorized access' });
             }
@@ -74,18 +78,22 @@ async function run() {
         app.post('/jwt', async (req, res) => {
             const user = req.body;
             const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
-            res.cookie('token', token, {
+
+            // Cookie Options
+            const cookieOptions = {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-            }).send({ success: true });
+                secure: isProduction,
+                sameSite: isProduction ? 'none' : 'strict',
+            };
+
+            res.cookie('token', token, cookieOptions).send({ success: true });
         });
 
         app.post('/logout', (req, res) => {
             res.clearCookie('token', {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+                secure: isProduction,
+                sameSite: isProduction ? 'none' : 'strict',
             }).send({ success: true });
         });
 
@@ -104,33 +112,28 @@ async function run() {
         app.get('/user/role/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.user.email) return res.status(403).send({ message: 'forbidden access' });
-
             const query = { email: email };
             const user = await usersCollection.findOne(query);
             res.send({ role: user?.role || 'user' });
         });
 
-        // --- APARTMENT ROUTES ---
-        // (Added try-catch to debug your 500 error)
+        // --- APARTMENTS ---
         app.get('/apartments', async (req, res) => {
             try {
                 const page = parseInt(req.query.page) || 1;
-                const size = parseInt(req.query.size) || 6; // Set default size to 6 per instructions
+                const size = parseInt(req.query.size) || 6;
                 const minRent = parseInt(req.query.minRent);
                 const maxRent = parseInt(req.query.maxRent);
-
                 const filter = {};
                 if (!isNaN(minRent) && !isNaN(maxRent)) {
                     filter.rent = { $gte: minRent, $lte: maxRent };
                 }
-
                 const result = await apartmentsCollection.find(filter)
                     .skip((page - 1) * size)
                     .limit(size)
                     .toArray();
                 res.send(result);
             } catch (error) {
-                console.error("Error fetching apartments:", error);
                 res.status(500).send({ message: "Failed to fetch apartments" });
             }
         });
@@ -150,16 +153,12 @@ async function run() {
             }
         });
 
-        // --- AGREEMENT ROUTES ---
-
-        // FIX: Singular/Plural mismatch fixed. Added /agreements/:email
+        // --- AGREEMENTS ---
         app.get('/agreements/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.user.email) return res.status(403).send({ message: 'forbidden access' });
-
             const query = { userEmail: email };
             const result = await agreementsCollection.find(query).toArray();
-            // Note: Returning array in case multiple requests, frontend can filter
             res.send(result);
         });
 
@@ -178,12 +177,8 @@ async function run() {
             const id = req.params.id;
             const { status } = req.body;
             const filter = { _id: new ObjectId(id) };
-            const updateDoc = {
-                $set: { status: status, checkedDate: new Date() }
-            };
-
+            const updateDoc = { $set: { status: status, checkedDate: new Date() } };
             const result = await agreementsCollection.updateOne(filter, updateDoc);
-
             if (status === 'checked') {
                 const agreement = await agreementsCollection.findOne(filter);
                 if (agreement) {
@@ -196,13 +191,12 @@ async function run() {
             res.send(result);
         });
 
-        // --- COUPON ROUTES (Missing previously) ---
+        // --- COUPONS ---
         app.get('/coupons', async (req, res) => {
             const result = await couponsCollection.find({ isAvailable: true }).toArray();
             res.send(result);
         });
 
-        // Admin manage coupons
         app.get('/admin/coupons', verifyToken, verifyAdmin, async (req, res) => {
             const result = await couponsCollection.find().toArray();
             res.send(result);
@@ -216,17 +210,14 @@ async function run() {
 
         app.put('/coupons/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
-            const filter = { _id: new ObjectId(id) };
-            // Toggle availability or update details
             const { isAvailable } = req.body;
-            const updateDoc = {
-                $set: { isAvailable: isAvailable }
-            }
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = { $set: { isAvailable: isAvailable } };
             const result = await couponsCollection.updateOne(filter, updateDoc);
             res.send(result);
         });
 
-        // --- ANNOUNCEMENT ROUTES ---
+        // --- ANNOUNCEMENTS ---
         app.get('/announcements', verifyToken, async (req, res) => {
             const result = await announcementsCollection.find().toArray();
             res.send(result);
@@ -238,7 +229,6 @@ async function run() {
             res.send(result);
         });
 
-        // Confirm Connection
         await client.db("admin").command({ ping: 1 });
         console.log("Connected to BMS");
 
