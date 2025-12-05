@@ -11,7 +11,7 @@ const port = process.env.PORT || 5000;
 
 // Middleware
 const corsOptions = {
-    origin: ['http://localhost:5173'],
+    origin: ['https://building-management-system-client.vercel.app/'],
     credentials: true,
     optionsSuccessStatus: 200,
 };
