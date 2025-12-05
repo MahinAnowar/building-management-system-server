@@ -275,7 +275,7 @@ async function run() {
             const query = { code: coupon, isAvailable: true };
             const result = await couponsCollection.findOne(query);
             if (result) {
-                res.send({ valid: true, discount: result.discountPercentage, ...result });
+                res.send({ valid: true, discount: result.discount, ...result });
             } else {
                 res.send({ valid: false });
             }
