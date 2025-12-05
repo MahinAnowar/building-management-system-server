@@ -148,6 +148,25 @@ async function run() {
             res.send(result);
         });
 
+        // Agreement Routes
+        app.post('/agreements', async (req, res) => {
+            const agreementData = req.body;
+            const result = await agreementsCollection.insertOne(agreementData);
+            res.send(result);
+        });
+
+        app.get('/agreements', async (req, res) => {
+            const result = await agreementsCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.get('/agreement/:email', async (req, res) => {
+            const email = req.params.email;
+            const query = { userEmail: email };
+            const result = await agreementsCollection.findOne(query);
+            res.send(result);
+        });
+
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
         console.log("Connected to BMS");
