@@ -18,7 +18,7 @@ async function test() {
 
     console.log("Since endpoints are protected, I will just verify the server starts and basic unprotected endpoints still work.");
 
-    const baseUrl = 'http://localhost:5000';
+    const baseUrl = 'https://building-management-system-client.vercel.app/';
     try {
         const res = await fetch(`${baseUrl}/`);
         const text = await res.text();
