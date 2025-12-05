@@ -211,7 +211,12 @@ async function run() {
         });
 
         app.get('/agreements', verifyToken, verifyAdmin, async (req, res) => {
-            const result = await agreementsCollection.find().toArray();
+            const status = req.query.status;
+            let query = {};
+            if (status) {
+                query.status = status;
+            }
+            const result = await agreementsCollection.find(query).toArray();
             res.send(result);
         });
 
