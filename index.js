@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -23,10 +22,9 @@ app.use(express.json());
 app.use(cookieParser());
 
 // MongoDB Connection
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.9v9ertm.mongodb.net/?appName=Cluster0`;
+// ENCODE PASSWORD to be safe against special characters in Vercel
+const uri = `mongodb+srv://${process.env.DB_USER}:${encodeURIComponent(process.env.DB_PASS)}@cluster0.9v9ertm.mongodb.net/?appName=Cluster0`;
 
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
@@ -37,21 +35,14 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
-        // await client.connect(); // In v4.7+ this is optional and will happen on first operation, but keeping for explicitness if preferred or checking connection eagerly.
-        // However, standard modern practice often skips explicit connect in some templates, but user asked for "standard best practices and log Connected to BMS".
-        // Explicit connection usually helps with early error detection.
-        // await client.connect(); 
-
         const db = client.db('bms-db');
         const usersCollection = db.collection('users');
         const apartmentsCollection = db.collection('apartments');
         const agreementsCollection = db.collection('agreements');
         const couponsCollection = db.collection('coupons');
         const announcementsCollection = db.collection('announcements');
-        const paymentsCollection = db.collection('payments');
 
-        // Middleware
+        // Middleware: Verify Token
         const verifyToken = (req, res, next) => {
             const token = req.cookies?.token;
             if (!token) {
@@ -66,6 +57,7 @@ async function run() {
             });
         };
 
+        // Middleware: Verify Admin
         const verifyAdmin = async (req, res, next) => {
             const email = req.user?.email;
             const query = { email: email };
@@ -77,121 +69,99 @@ async function run() {
             next();
         }
 
-        // Auth Routes
+        // --- AUTH ROUTES ---
         app.post('/jwt', async (req, res) => {
             const user = req.body;
             const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
-            res
-                .cookie('token', token, {
-                    httpOnly: true,
-                    secure: process.env.NODE_ENV === 'production',
-                    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-                })
-                .send({ success: true });
+            res.cookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+            }).send({ success: true });
         });
 
         app.post('/logout', (req, res) => {
-            res
-                .clearCookie('token', {
-                    httpOnly: true,
-                    secure: process.env.NODE_ENV === 'production',
-                    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-                })
-                .send({ success: true });
+            res.clearCookie('token', {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+            }).send({ success: true });
         });
 
-        // Apartment Routes
-        app.get('/apartments', async (req, res) => {
-            const page = parseInt(req.query.page) || 1;
-            const size = parseInt(req.query.size) || 10;
-            const minRent = parseInt(req.query.minRent);
-            const maxRent = parseInt(req.query.maxRent);
-
-            const filter = {};
-            if (!isNaN(minRent) && !isNaN(maxRent)) {
-                filter.rent = { $gte: minRent, $lte: maxRent };
-            }
-
-            const result = await apartmentsCollection.find(filter)
-                .skip((page - 1) * size)
-                .limit(size)
-                .toArray();
-            res.send(result);
-        });
-
-        app.get('/apartmentsCount', async (req, res) => {
-            const minRent = parseInt(req.query.minRent);
-            const maxRent = parseInt(req.query.maxRent);
-
-            const filter = {};
-            if (!isNaN(minRent) && !isNaN(maxRent)) {
-                filter.rent = { $gte: minRent, $lte: maxRent };
-            }
-
-            const count = await apartmentsCollection.countDocuments(filter);
-            res.send({ count });
-        });
-
-        // User Routes
+        // --- USER ROUTES ---
         app.post('/users', async (req, res) => {
             const user = req.body;
             const query = { email: user.email };
             const existingUser = await usersCollection.findOne(query);
-            if (existingUser) {
-                return res.send({ message: 'user already exists', insertedId: null });
-            }
-            // Default role is user. Admin verification will happen on specific routes.
-            // Ensure data integrity if needed, but for now just inserting.
-            const userInfo = {
-                ...user,
-                role: 'user',
-                timestamp: Date.now()
-            }
+            if (existingUser) return res.send({ message: 'user already exists', insertedId: null });
+
+            const userInfo = { ...user, role: 'user', timestamp: Date.now() }
             const result = await usersCollection.insertOne(userInfo);
             res.send(result);
         });
 
         app.get('/user/role/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
-            if (email !== req.user.email) {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
+            if (email !== req.user.email) return res.status(403).send({ message: 'forbidden access' });
+
             const query = { email: email };
             const user = await usersCollection.findOne(query);
-            let role = 'user';
-            if (user) {
-                role = user.role;
-            }
-            res.send({ role });
+            res.send({ role: user?.role || 'user' });
         });
 
-        app.get('/members', verifyToken, verifyAdmin, async (req, res) => {
-            const query = { role: 'member' };
-            const result = await usersCollection.find(query).toArray();
-            res.send(result);
-        });
+        // --- APARTMENT ROUTES ---
+        // (Added try-catch to debug your 500 error)
+        app.get('/apartments', async (req, res) => {
+            try {
+                const page = parseInt(req.query.page) || 1;
+                const size = parseInt(req.query.size) || 6; // Set default size to 6 per instructions
+                const minRent = parseInt(req.query.minRent);
+                const maxRent = parseInt(req.query.maxRent);
 
-        app.delete('/user/:id', verifyToken, verifyAdmin, async (req, res) => {
-            const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const result = await usersCollection.deleteOne(query);
-            res.send(result);
-        });
-
-        app.patch('/user/demote/:id', verifyToken, verifyAdmin, async (req, res) => {
-            const id = req.params.id;
-            const filter = { _id: new ObjectId(id) };
-            const updatedDoc = {
-                $set: {
-                    role: 'user',
-                    agreementId: null // Clearing agreement info if loosely coupled
+                const filter = {};
+                if (!isNaN(minRent) && !isNaN(maxRent)) {
+                    filter.rent = { $gte: minRent, $lte: maxRent };
                 }
+
+                const result = await apartmentsCollection.find(filter)
+                    .skip((page - 1) * size)
+                    .limit(size)
+                    .toArray();
+                res.send(result);
+            } catch (error) {
+                console.error("Error fetching apartments:", error);
+                res.status(500).send({ message: "Failed to fetch apartments" });
             }
-            const result = await usersCollection.updateOne(filter, updatedDoc);
+        });
+
+        app.get('/apartmentsCount', async (req, res) => {
+            try {
+                const minRent = parseInt(req.query.minRent);
+                const maxRent = parseInt(req.query.maxRent);
+                const filter = {};
+                if (!isNaN(minRent) && !isNaN(maxRent)) {
+                    filter.rent = { $gte: minRent, $lte: maxRent };
+                }
+                const count = await apartmentsCollection.countDocuments(filter);
+                res.send({ count });
+            } catch (error) {
+                res.status(500).send({ message: "Error counting" });
+            }
+        });
+
+        // --- AGREEMENT ROUTES ---
+
+        // FIX: Singular/Plural mismatch fixed. Added /agreements/:email
+        app.get('/agreements/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.user.email) return res.status(403).send({ message: 'forbidden access' });
+
+            const query = { userEmail: email };
+            const result = await agreementsCollection.find(query).toArray();
+            // Note: Returning array in case multiple requests, frontend can filter
             res.send(result);
         });
 
-        // Agreement Routes
         app.post('/agreements', verifyToken, async (req, res) => {
             const agreementData = req.body;
             const result = await agreementsCollection.insertOne(agreementData);
@@ -203,38 +173,21 @@ async function run() {
             res.send(result);
         });
 
-        app.get('/agreement/:email', verifyToken, async (req, res) => {
-            const email = req.params.email;
-            if (email !== req.user.email) {
-                // Allow admin? For now restricted to own or logic in frontend
-                // But let's check standard verifyToken
-            }
-            const query = { userEmail: email };
-            const result = await agreementsCollection.findOne(query);
-            res.send(result);
-        });
-
         app.put('/agreement/status/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
             const { status } = req.body;
             const filter = { _id: new ObjectId(id) };
             const updateDoc = {
-                $set: {
-                    status: status,
-                    checkedDate: new Date()
-                }
+                $set: { status: status, checkedDate: new Date() }
             };
 
             const result = await agreementsCollection.updateOne(filter, updateDoc);
 
             if (status === 'checked') {
-                // Find agreement to get user email
                 const agreement = await agreementsCollection.findOne(filter);
                 if (agreement) {
-                    const userEmail = agreement.userEmail;
-                    // Update user role to member
                     await usersCollection.updateOne(
-                        { email: userEmail },
+                        { email: agreement.userEmail },
                         { $set: { role: 'member' } }
                     );
                 }
@@ -242,18 +195,57 @@ async function run() {
             res.send(result);
         });
 
-        // Send a ping to confirm a successful connection
+        // --- COUPON ROUTES (Missing previously) ---
+        app.get('/coupons', async (req, res) => {
+            const result = await couponsCollection.find({ isAvailable: true }).toArray();
+            res.send(result);
+        });
+
+        // Admin manage coupons
+        app.get('/admin/coupons', verifyToken, verifyAdmin, async (req, res) => {
+            const result = await couponsCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.post('/coupons', verifyToken, verifyAdmin, async (req, res) => {
+            const coupon = req.body;
+            const result = await couponsCollection.insertOne(coupon);
+            res.send(result);
+        });
+
+        app.put('/coupons/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            // Toggle availability or update details
+            const { isAvailable } = req.body;
+            const updateDoc = {
+                $set: { isAvailable: isAvailable }
+            }
+            const result = await couponsCollection.updateOne(filter, updateDoc);
+            res.send(result);
+        });
+
+        // --- ANNOUNCEMENT ROUTES ---
+        app.get('/announcements', verifyToken, async (req, res) => {
+            const result = await announcementsCollection.find().toArray();
+            res.send(result);
+        });
+
+        app.post('/announcements', verifyToken, verifyAdmin, async (req, res) => {
+            const item = req.body;
+            const result = await announcementsCollection.insertOne(item);
+            res.send(result);
+        });
+
+        // Confirm Connection
         await client.db("admin").command({ ping: 1 });
         console.log("Connected to BMS");
+
     } catch (error) {
-        console.error("Database connection error:", error);
-    } finally {
-        // Ensures that the client will close when you finish/error
-        // await client.close(); // Keep connection open for server
+        console.error("Server Startup Error:", error);
     }
 }
 run().catch(console.dir);
-
 
 app.get('/', (req, res) => {
     res.send('BMS Server is running');
