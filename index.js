@@ -217,11 +217,13 @@ async function run() {
 
         app.put('/agreement/status/:id', verifyToken, verifyAdmin, async (req, res) => {
             const id = req.params.id;
-            const { status } = req.body;
+            const { status, role } = req.body;
             const filter = { _id: new ObjectId(id) };
             const updateDoc = { $set: { status: status, checkedDate: new Date() } };
             const result = await agreementsCollection.updateOne(filter, updateDoc);
-            if (status === 'checked') {
+
+            // Only promote user and rent apartment if ACCEPTED (role attached is 'member')
+            if (status === 'checked' && role === 'member') {
                 const agreement = await agreementsCollection.findOne(filter);
                 if (agreement) {
                     await usersCollection.updateOne(
