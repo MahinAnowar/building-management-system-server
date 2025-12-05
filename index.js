@@ -97,6 +97,38 @@ async function run() {
                 .send({ success: true });
         });
 
+        // Apartment Routes
+        app.get('/apartments', async (req, res) => {
+            const page = parseInt(req.query.page) || 1;
+            const size = parseInt(req.query.size) || 10;
+            const minRent = parseInt(req.query.minRent);
+            const maxRent = parseInt(req.query.maxRent);
+
+            const filter = {};
+            if (!isNaN(minRent) && !isNaN(maxRent)) {
+                filter.rent = { $gte: minRent, $lte: maxRent };
+            }
+
+            const result = await apartmentsCollection.find(filter)
+                .skip((page - 1) * size)
+                .limit(size)
+                .toArray();
+            res.send(result);
+        });
+
+        app.get('/apartmentsCount', async (req, res) => {
+            const minRent = parseInt(req.query.minRent);
+            const maxRent = parseInt(req.query.maxRent);
+
+            const filter = {};
+            if (!isNaN(minRent) && !isNaN(maxRent)) {
+                filter.rent = { $gte: minRent, $lte: maxRent };
+            }
+
+            const count = await apartmentsCollection.countDocuments(filter);
+            res.send({ count });
+        });
+
         // User Routes
         app.post('/users', async (req, res) => {
             const user = req.body;
