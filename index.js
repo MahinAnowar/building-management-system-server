@@ -16,6 +16,7 @@ console.log("Current Environment:", process.env.NODE_ENV);
 const corsOptions = {
     origin: [
         'http://localhost:5173',
+        'http://localhost:5174',
         'https://building-management-system-client.vercel.app'
         // Add other deployed URLs if any
     ],
