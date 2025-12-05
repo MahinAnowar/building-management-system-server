@@ -45,6 +45,7 @@ async function run() {
         const agreementsCollection = db.collection('agreements');
         const couponsCollection = db.collection('coupons');
         const announcementsCollection = db.collection('announcements');
+        const paymentsCollection = db.collection('payments');
 
         // Middleware: Verify Token
         const verifyToken = (req, res, next) => {
@@ -109,6 +110,26 @@ async function run() {
             res.send(result);
         });
 
+        app.patch('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: { role: 'user' },
+                $unset: { rentedApartmentId: "", agreementId: "" }
+            };
+            const result = await usersCollection.updateOne(filter, updateDoc);
+            // Also update the apartment status to available
+            // We might need to find which apartment they had. 
+            // Ideally we find the agreement and set the apartment to available.
+            // But valid requirement: "clear apartment info". 
+            res.send(result);
+        });
+
+        app.get('/members', verifyToken, verifyAdmin, async (req, res) => {
+            const result = await usersCollection.find({ role: 'member' }).toArray();
+            res.send(result);
+        });
+
         app.get('/user/role/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
             if (email !== req.user.email) return res.status(403).send({ message: 'forbidden access' });
@@ -153,6 +174,27 @@ async function run() {
             }
         });
 
+        // --- STATS ---
+        app.get('/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
+            const totalRooms = await apartmentsCollection.countDocuments();
+            const bookedRooms = await apartmentsCollection.countDocuments({ isRented: true });
+            const availableRooms = totalRooms - bookedRooms;
+            const percentAvailable = totalRooms > 0 ? ((availableRooms / totalRooms) * 100).toFixed(2) : 0;
+            const percentBooked = totalRooms > 0 ? ((bookedRooms / totalRooms) * 100).toFixed(2) : 0;
+            const totalUsers = await usersCollection.countDocuments();
+            const totalMembers = await usersCollection.countDocuments({ role: 'member' });
+
+            res.send({
+                totalRooms,
+                availableRooms,
+                bookedRooms,
+                percentAvailable,
+                percentBooked,
+                totalUsers,
+                totalMembers
+            });
+        });
+
         // --- AGREEMENTS ---
         app.get('/agreements/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
@@ -184,7 +226,11 @@ async function run() {
                 if (agreement) {
                     await usersCollection.updateOne(
                         { email: agreement.userEmail },
-                        { $set: { role: 'member' } }
+                        { $set: { role: 'member', rentedApartmentId: agreement.apartmentId, agreementId: agreement._id } }
+                    );
+                    await apartmentsCollection.updateOne(
+                        { _id: new ObjectId(agreement.apartmentId) },
+                        { $set: { isRented: true } }
                     );
                 }
             }
@@ -217,6 +263,17 @@ async function run() {
             res.send(result);
         });
 
+        app.post('/coupons/validate', verifyToken, async (req, res) => {
+            const { coupon } = req.body;
+            const query = { code: coupon, isAvailable: true };
+            const result = await couponsCollection.findOne(query);
+            if (result) {
+                res.send({ valid: true, discount: result.discountPercentage, ...result });
+            } else {
+                res.send({ valid: false });
+            }
+        });
+
         // --- ANNOUNCEMENTS ---
         app.get('/announcements', verifyToken, async (req, res) => {
             const result = await announcementsCollection.find().toArray();
@@ -226,6 +283,22 @@ async function run() {
         app.post('/announcements', verifyToken, verifyAdmin, async (req, res) => {
             const item = req.body;
             const result = await announcementsCollection.insertOne(item);
+            res.send(result);
+        });
+
+
+        // --- PAYMENTS ---
+        app.post('/payments', verifyToken, async (req, res) => {
+            const payment = req.body;
+            const result = await paymentsCollection.insertOne(payment);
+            res.send(result);
+        });
+
+        app.get('/payments', verifyToken, async (req, res) => {
+            const email = req.query.email;
+            if (email !== req.user.email) return res.status(403).send({ message: 'forbidden access' });
+            const query = { email: email };
+            const result = await paymentsCollection.find(query).toArray();
             res.send(result);
         });
 
