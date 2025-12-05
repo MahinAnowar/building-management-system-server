@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 const port = process.env.PORT || 5000;
+console.log("Current Environment:", process.env.NODE_ENV);
 
 // Middleware
 const corsOptions = {
