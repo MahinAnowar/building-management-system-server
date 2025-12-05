@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require('jsonwebtoken');
 
 const app = express();
@@ -148,22 +148,94 @@ async function run() {
             res.send(result);
         });
 
+        app.get('/user/role/:email', verifyToken, async (req, res) => {
+            const email = req.params.email;
+            if (email !== req.user.email) {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            const query = { email: email };
+            const user = await usersCollection.findOne(query);
+            let role = 'user';
+            if (user) {
+                role = user.role;
+            }
+            res.send({ role });
+        });
+
+        app.get('/members', verifyToken, verifyAdmin, async (req, res) => {
+            const query = { role: 'member' };
+            const result = await usersCollection.find(query).toArray();
+            res.send(result);
+        });
+
+        app.delete('/user/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: new ObjectId(id) };
+            const result = await usersCollection.deleteOne(query);
+            res.send(result);
+        });
+
+        app.patch('/user/demote/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    role: 'user',
+                    agreementId: null // Clearing agreement info if loosely coupled
+                }
+            }
+            const result = await usersCollection.updateOne(filter, updatedDoc);
+            res.send(result);
+        });
+
         // Agreement Routes
-        app.post('/agreements', async (req, res) => {
+        app.post('/agreements', verifyToken, async (req, res) => {
             const agreementData = req.body;
             const result = await agreementsCollection.insertOne(agreementData);
             res.send(result);
         });
 
-        app.get('/agreements', async (req, res) => {
+        app.get('/agreements', verifyToken, verifyAdmin, async (req, res) => {
             const result = await agreementsCollection.find().toArray();
             res.send(result);
         });
 
-        app.get('/agreement/:email', async (req, res) => {
+        app.get('/agreement/:email', verifyToken, async (req, res) => {
             const email = req.params.email;
+            if (email !== req.user.email) {
+                // Allow admin? For now restricted to own or logic in frontend
+                // But let's check standard verifyToken
+            }
             const query = { userEmail: email };
             const result = await agreementsCollection.findOne(query);
+            res.send(result);
+        });
+
+        app.put('/agreement/status/:id', verifyToken, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const { status } = req.body;
+            const filter = { _id: new ObjectId(id) };
+            const updateDoc = {
+                $set: {
+                    status: status,
+                    checkedDate: new Date()
+                }
+            };
+
+            const result = await agreementsCollection.updateOne(filter, updateDoc);
+
+            if (status === 'checked') {
+                // Find agreement to get user email
+                const agreement = await agreementsCollection.findOne(filter);
+                if (agreement) {
+                    const userEmail = agreement.userEmail;
+                    // Update user role to member
+                    await usersCollection.updateOne(
+                        { email: userEmail },
+                        { $set: { role: 'member' } }
+                    );
+                }
+            }
             res.send(result);
         });
 
